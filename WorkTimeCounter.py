@@ -12,11 +12,26 @@ import threading
 
 handel = None
 LogonTime = None
+ClockRunning = False
 LogonRefreshTime = 3600
 DayLength = 9
 DayStart = datetime.time(5, 0, 0)
 TimeBufferStart = datetime.time(7, 30, 0)
 TimeBufferEnd = datetime.time(8, 0, 0)
+
+
+class Timer:
+    def __init__(self, master):
+        self.master = master
+        master.title("t")
+        self.time_str = tk.StringVar()
+        self.label_font = ('helvetica', 40)
+        self.label = tk.Label(self.master, textvariable=self.time_str, font=self.label_font, bg='white',
+                              fg='blue', relief='raised', bd=3)
+        self.label.pack(fill='x', padx=5, pady=5)
+
+    def update(self, text):
+        self.time_str.set(text)
 
 
 class MainThread (threading.Thread):
@@ -63,23 +78,22 @@ def refresh_logon_time():
 
 
 def show_timer():
-            root = tk.Tk()
-            time_str = tk.StringVar()
-            label_font = ('helvetica', 40)
-            tk.Label(root, textvariable=time_str, font=label_font, bg='white', 
-                     fg='blue', relief='raised', bd=3).pack(fill='x', padx=5, pady=5)
-            if LogonTime is not None:
-                def callback():
-                    current_date_time = datetime.datetime.now()
-                    diff = LogonTime - current_date_time
-                    time_str.set(CommonResources.get_formatted_time(int(diff.total_seconds())))
-                    root.update()
-                    root.after(1000, callback)
-                root.after(10, callback)
-            else:
-                time_str.set('Time not found')
-                root.update()
-            root.mainloop()
+    root = tk.Tk()
+    timer_gui = Timer(root)
+    if LogonTime is not None:
+        def callback():
+            current_date_time = datetime.datetime.now()
+            diff = LogonTime - current_date_time
+            timer_gui.update(CommonResources.get_formatted_time(int(diff.total_seconds())))
+            root.update()
+            root.after(1000, callback)
+        root.after(10, callback)
+    else:
+        timer_gui.update('Time not found')
+        root.update()
+    root.mainloop()
+    global ClockRunning
+    ClockRunning = False
 
 
 def message_popup(message, title):
@@ -202,8 +216,11 @@ class WorkTimeCounter:
     def on_command(self, hwnd, msg, wparam, lparam):
         command_id = win32api.LOWORD(wparam)
         if command_id == 1024:
-            timer_thread2 = MainThread(2)
-            timer_thread2.start()
+            global ClockRunning
+            if not ClockRunning:  # tkinter is not thread safe.
+                timer_thread2 = MainThread(2)
+                timer_thread2.start()
+                ClockRunning = True
         elif command_id == 1025:
             win32gui.DestroyWindow(self.hwnd)
         else:
