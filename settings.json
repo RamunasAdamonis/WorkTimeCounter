@@ -1,0 +1,21 @@
+{
+	"general": {
+		"startHour":8,
+		"startMinute":0,
+		"dayLengthHour":9,
+		"dayLengthMinute":9,
+		"minTimeHour":8,
+		"minTimeMinute":0,
+		"maxTimeHour":8,
+		"maxTimeMinute":0
+	},
+	"weekdays":{
+		"monday": null,
+		"tuesday":null,
+		"wednesday":null,
+		"thursday":null,
+		"friday":null
+	}	
+
+
+}

@@ -3,21 +3,20 @@ import win32gui
 import win32con
 import os
 import time
-import win32evtlog
 import datetime
 import tkinter as tk
-import getpass
 import threading
-# import json TODO
+import json
+
+import SettingsWidget
+import Common
+import Globals
 
 handel = None
 LogonTime = None
 ClockRunning = False
 LogonRefreshTime = 3600
-DayLength = 9
-DayStart = datetime.time(5, 0, 0)
-TimeBufferStart = datetime.time(7, 30, 0)
-TimeBufferEnd = datetime.time(8, 0, 0)
+popup_happened = 0
 
 
 class Timer:
@@ -49,14 +48,14 @@ class MainThread (threading.Thread):
 
 
 def update_status():
-    popup_happened = 0
+    global popup_happened
     while True:
         if LogonTime is not None:     
             current_date_time = datetime.datetime.now()
             diff = LogonTime - current_date_time
             win32gui.Shell_NotifyIcon(win32gui.NIM_MODIFY,
                                       (handel, 0, win32gui.NIF_TIP, win32con.WM_USER+20,
-                                       0, CommonResources.get_formatted_time(int(diff.total_seconds()), 1)))
+                                       0, Common.CommonResources.get_formatted_time(int(diff.total_seconds()), 1)))
             if not popup_happened and diff.total_seconds() <= 0:
                 popup_happened = 1
                 message_popup('It is time to go home.', 'Go home!')
@@ -69,12 +68,19 @@ def update_status():
             
 
 def refresh_logon_time():
+    count = 0
     while True:
+        global popup_happened
         time.sleep(LogonRefreshTime)
-        logon_time = CommonResources.get_login_time()
+        logon_time = Common.CommonResources.get_login_time(global_params)
         if logon_time is not None:
             global LogonTime
             LogonTime = logon_time
+        if popup_happened:
+            count += 1
+            if count == 4:  # TODO meaningful number
+                count = 0
+                popup_happened = 0
 
 
 def show_timer():
@@ -84,7 +90,7 @@ def show_timer():
         def callback():
             current_date_time = datetime.datetime.now()
             diff = LogonTime - current_date_time
-            timer_gui.update(CommonResources.get_formatted_time(int(diff.total_seconds())))
+            timer_gui.update(Common.CommonResources.get_formatted_time(int(diff.total_seconds())))
             root.update()
             root.after(1000, callback)
         root.after(10, callback)
@@ -102,57 +108,6 @@ def message_popup(message, title):
                               (handel, 0, win32gui.NIF_INFO, win32con.WM_USER+20,
                                0, "Balloon  tooltip", message, 1, title, win32gui.NIIF_WARNING))
 
-
-class CommonResources:
-    @staticmethod
-    def get_formatted_time(seconds, time_format=0):
-        m, s = divmod(abs(seconds), 60)
-        h, m = divmod(m, 60)
-        if time_format == 0:           
-            if seconds >= 0:
-                formatted_time = '{:d}:{:02d}:{:02d}'.format(h, m, s)
-            else:
-                formatted_time = '-{:d}:{:02d}:{:02d}'.format(h, m, s)
-        else:
-            if seconds >= -59:
-                formatted_time = '{:d}:{:02d}'.format(h, m)
-            else:
-                formatted_time = '-{:d}:{:02d}'.format(h, m)
-        return formatted_time
-
-    @staticmethod
-    def get_login_time():
-        server = 'localhost'  # name of the target computer to get event logs
-        log_type = 'Security'  # Log type
-        hand = win32evtlog.OpenEventLog(server, log_type)
-        flags = win32evtlog.EVENTLOG_BACKWARDS_READ | win32evtlog.EVENTLOG_SEQUENTIAL_READ
-        current_date_time = datetime.datetime.now()
-        start_of_the_day = datetime.datetime.combine(datetime.date.today(), DayStart)
-        logon_time = current_date_time + datetime.timedelta(days=1)
-        loop_breaker = False
-        for j in range(0, 5000):
-            if loop_breaker:
-                break
-            events = win32evtlog.ReadEventLog(hand, flags, 0)
-            if events:
-                for event in events:
-                    if event.TimeGenerated < start_of_the_day:
-                        loop_breaker = True
-                    elif (event.EventID == 4648
-                          and event.SourceName == "Microsoft-Windows-Security-Auditing"
-                          and event.StringInserts[8] == "localhost"
-                          and event.StringInserts[5] == getpass.getuser()):
-                        if event.TimeGenerated < logon_time:
-                            logon_time = event.TimeGenerated
-        if logon_time > current_date_time:
-            logon_time = None
-        else:
-            if TimeBufferStart is not None:
-                if TimeBufferStart < logon_time.time() < TimeBufferEnd:
-                    logon_time = datetime.datetime.combine(datetime.date.today(), TimeBufferEnd)
-                logon_time += datetime.timedelta(hours=DayLength)
-        return logon_time
-    
 
 class WorkTimeCounter:
     def __init__(self):
@@ -206,30 +161,65 @@ class WorkTimeCounter:
         elif lparam == win32con.WM_RBUTTONUP:
             menu = win32gui.CreatePopupMenu()
             win32gui.AppendMenu(menu, win32con.MF_STRING, 1024, "Show timer")
-            win32gui.AppendMenu(menu, win32con.MF_STRING, 1025, "Exit")
+            win32gui.AppendMenu(menu, win32con.MF_STRING, 1025, "Settings")
+            win32gui.AppendMenu(menu, win32con.MF_STRING, 1026, "Exit")
             pos = win32gui.GetCursorPos()
             win32gui.SetForegroundWindow(self.hwnd)
             win32gui.TrackPopupMenu(menu, win32con.TPM_LEFTALIGN, pos[0], pos[1], 0, self.hwnd, None)
             win32gui.PostMessage(self.hwnd, win32con.WM_NULL, 0, 0)
         return 1
+
+    def show_settings(self):
+        root = tk.Tk()
+        settings_gui = SettingsWidget.SettingsWidget(root, global_params)
+        # check if setting file exists
+        # print(os.path.expanduser('~/filename'))
+        root.mainloop()
     
     def on_command(self, hwnd, msg, wparam, lparam):
         command_id = win32api.LOWORD(wparam)
+        global ClockRunning
         if command_id == 1024:
-            global ClockRunning
             if not ClockRunning:  # tkinter is not thread safe.
                 timer_thread2 = MainThread(2)
                 timer_thread2.start()
                 ClockRunning = True
         elif command_id == 1025:
+            if not ClockRunning:
+                self.show_settings()
+        elif command_id == 1026:
             win32gui.DestroyWindow(self.hwnd)
         else:
             print("Unknown command -", command_id)
 
 
+def check_settings():
+    settings_folder, settings_file = Common.CommonResources.get_settings_file()
+    print(settings_file)
+    if not os.path.exists(settings_file):
+        if not os.path.exists(settings_folder):
+            try:
+                os.makedirs(settings_folder)
+            except OSError:
+                raise
+        settings_dict = Common.CommonResources.get_setting_dictionary(global_params)
+        Common.CommonResources.write_to_file(settings_file, settings_dict)
+    else:
+        with open(settings_file) as data_file:
+            data = json.load(data_file)
+        try:
+            Common.CommonResources.set_global_settings(data, global_params)
+        except KeyError:
+            print("Corrupt setting file")
+        except:
+            raise
+
+
 if __name__ == '__main__':
     w = WorkTimeCounter()
-    LogonTime = CommonResources.get_login_time()
+    global_params = Globals.Globals()
+    check_settings()
+    LogonTime = Common.CommonResources.get_login_time(global_params)
     timer_thread = MainThread(1)
     timer_thread.start()
     timer_thread3 = MainThread(3)
